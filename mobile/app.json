@@ -1,0 +1,4 @@
+{"expo":{"name":"Scanner Finder","slug":"scanner-finder","version":"1.0.0","orientation":"portrait","userInterfaceStyle":"dark",
+"ios":{"bundleIdentifier":"com.example.scannerfinder","infoPlist":{"UIBackgroundModes":["audio"],"NSLocationWhenInUseUsageDescription":"Used to find scanners near you."}},
+"android":{"package":"com.example.scannerfinder","permissions":["ACCESS_COARSE_LOCATION","FOREGROUND_SERVICE"]},
+"plugins":["expo-location"]}}

@@ -1,0 +1,47 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f1419"><meta name="apple-mobile-web-app-capable" content="yes"><link rel="manifest" href="manifest.json">
+<title>Scanner Finder</title><style>
+*{box-sizing:border-box}body{margin:0;font:16px/1.4 system-ui,sans-serif;background:#0f1419;color:#e6e9ec}
+header{position:sticky;top:0;background:#0f1419;padding:14px 16px 10px;border-bottom:1px solid #222a33;z-index:2}
+h1{font-size:19px;margin:0 0 10px}input{width:100%;padding:12px 14px;border-radius:10px;border:1px solid #2c3640;background:#18202a;color:inherit;font-size:16px}
+.row{display:flex;gap:8px;margin-top:8px}button{background:#1e6fd9;color:#fff;border:0;border-radius:10px;padding:10px 14px;font-size:15px}
+button.sec{background:#222c37}#status{font-size:13px;color:#8b96a1;margin-top:8px}
+ul{list-style:none;margin:0;padding:0 12px 140px}li{padding:14px 12px;border-bottom:1px solid #1d252e;cursor:pointer}
+li b{display:block}li small{color:#8b96a1}.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:#2ecc71;margin-right:6px}
+#player{position:fixed;bottom:0;left:0;right:0;background:#161e27;border-top:1px solid #2c3640;padding:12px 16px calc(12px + env(safe-area-inset-bottom));display:none}
+#player b{display:block}#now{font-size:13px;color:#8b96a1;margin:4px 0 8px}#log{max-height:30vh;overflow:auto;font-size:13px;color:#aab4be}
+</style></head><body>
+<header><h1>Scanner Finder</h1><input id="q" placeholder="Search city, county, state, or name" autocomplete="off">
+<div class="row"><button id="near" class="sec">Near me</button><button id="all" class="sec">Active only: on</button></div><div id="status">Loading systems…</div></header>
+<ul id="list"></ul>
+<div id="player"><b id="pname"></b><div id="now">Waiting for calls…</div>
+<div class="row"><button id="toggle">Pause</button><button id="stop" class="sec">Stop</button></div><div id="log"></div></div>
+<audio id="audio"></audio>
+<script>
+const API='https://api.openmhz.com';let systems=[],activeOnly=true,cur=null,queue=[],lastTime=0,poll=null,tgs={},paused=false,userPos=null;
+const $=id=>document.getElementById(id),A=$('audio');
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function load(){try{const r=await fetch(API+'/systems');const j=await r.json();systems=j.systems||[];render()}catch(e){$('status').textContent='Could not reach OpenMHz. Try again later.'}}
+function isActive(s){return s.active!==false&&(!s.lastActive||Date.now()-new Date(s.lastActive)<36e5*6)}
+function render(){const q=$('q').value.trim().toLowerCase();let l=systems.filter(s=>(!activeOnly||isActive(s))&&(!q||[s.name,s.city,s.county,s.state,s.shortName,s.description].join(' ').toLowerCase().includes(q)));
+if(userPos&&!q){const st=userPos.state;l.sort((a,b)=>((b.state===st)-(a.state===st))||(''+a.city).localeCompare(b.city))}else l.sort((a,b)=>(''+a.state).localeCompare(b.state)||(''+a.name).localeCompare(b.name));
+$('status').textContent=l.length+' of '+systems.length+' systems';
+$('list').innerHTML=l.slice(0,400).map(s=>`<li data-s="${esc(s.shortName)}"><b>${isActive(s)?'<span class="dot"></span>':''}${esc(s.name)}</b><small>${esc([s.city,s.county,s.state].filter(Boolean).join(', '))}${s.description?' · '+esc(s.description):''}</small></li>`).join('')}
+$('q').oninput=render;$('all').onclick=()=>{activeOnly=!activeOnly;$('all').textContent='Active only: '+(activeOnly?'on':'off');render()};
+$('near').onclick=()=>{if(!navigator.geolocation)return;$('status').textContent='Locating…';navigator.geolocation.getCurrentPosition(async p=>{try{const r=await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${p.coords.latitude}&lon=${p.coords.longitude}`);const j=await r.json();const a=j.address||{};const map={};const code=(a['ISO3166-2-lvl4']||'').split('-')[1];userPos={state:code};$('q').value=(a.county||a.city||'').replace(/ County$/,'');render();if(!$('list').children.length){$('q').value=code||'';render()}}catch(e){render()}},ipFallback,{timeout:8000})};
+async function ipFallback(){try{const j=await(await fetch('https://ipapi.co/json/')).json();userPos={state:j.region_code};$('q').value=j.city||j.region_code||'';render();if(!$('list').children.length){$('q').value=j.region_code||'';render()}$('status').textContent+=' · approximate location ('+(j.city||'')+', '+(j.region_code||'')+')'}catch(e){$('status').textContent='Location unavailable. Type a city or state above.'}}
+$('list').onclick=e=>{const li=e.target.closest('li');if(li)start(systems.find(s=>s.shortName===li.dataset.s))};
+async function start(s){stop();cur=s;$('player').style.display='block';$('pname').textContent=s.name;$('now').textContent='Loading recent calls…';$('log').innerHTML='';
+try{const t=await(await fetch(`${API}/${s.shortName}/talkgroups`)).json();tgs=t.talkgroups||{}}catch(e){tgs={}}
+try{const j=await(await fetch(`${API}/${s.shortName}/calls`)).json();const c=(j.calls||[]).sort((a,b)=>new Date(a.time)-new Date(b.time));queue=c.slice(-5);lastTime=c.length?new Date(c[c.length-1].time).getTime():Date.now();playNext()}catch(e){$('now').textContent='No calls available'}
+poll=setInterval(fetchNew,5000)}
+async function fetchNew(){if(!cur)return;try{const j=await(await fetch(`${API}/${cur.shortName}/calls/newer?time=${lastTime}`)).json();const c=(j.calls||[]).sort((a,b)=>new Date(a.time)-new Date(b.time));c.forEach(x=>{const t=new Date(x.time).getTime();if(t>lastTime){lastTime=t;queue.push(x)}});if(A.paused&&!paused)playNext()}catch(e){}}
+function label(c){const t=tgs[c.talkgroupNum];return (t&&(t.description||t.alpha))||('Talkgroup '+c.talkgroupNum)}
+function playNext(){if(paused||!queue.length){if(!queue.length)$('now').textContent='Listening… waiting for next transmission';return}const c=queue.shift();A.src=c.url;A.play().catch(()=>{$('now').textContent='Tap Pause/Play to start audio';paused=true;$('toggle').textContent='Play'});
+const line=`${new Date(c.time).toLocaleTimeString()} · ${label(c)} · ${c.len||'?'}s`;$('now').textContent='▶ '+line;$('log').insertAdjacentHTML('afterbegin','<div>'+esc(line)+'</div>')}
+A.onended=playNext;A.onerror=playNext;
+$('toggle').onclick=()=>{paused=!paused;$('toggle').textContent=paused?'Play':'Pause';if(paused)A.pause();else if(A.src&&!A.ended&&A.currentTime>0)A.play();else playNext()};
+function stop(){clearInterval(poll);A.pause();queue=[];cur=null;paused=false;$('toggle').textContent='Pause'}
+$('stop').onclick=()=>{stop();$('player').style.display='none'};
+load();
+</script></body></html>
